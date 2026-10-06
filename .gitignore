@@ -1,0 +1,43 @@
+# ── Dependencies ─────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# DSH mounts a plugin profile through this directory. A junction placed
+# inside it is deleted recursively by DSH's startup cleanup, which follows
+# the link out and takes the workspace with it. Never commit it.
+.dsh-module-fallback/
+
+# ── Generated output & working data ──────────────────────────────────────
+# Every clip, frame dump, seam comparison and contact sheet from the last
+# few sessions (~285 MB). This is the default `save_dir`, not source.
+generated-videos/
+
+# Snapshots of the local ledger (~/.dsh/openrouter-video/{jobs,graphs}.json).
+.workbench-backup/
+
+# Local reference plates and character sheets passed as `image_file`.
+# Not needed to run the plugin; drop these two lines if you want them
+# committed as demo assets.
+cast/
+scenes/
+
+# ── Local scratch ────────────────────────────────────────────────────────
+# UI render harness (headless Chrome over the real stylesheet) plus its
+# screenshots and derived theme CSS. Dev-only; not shipped.
+.shot/
+
+# ── Logs & temp ──────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.tmp
+.tmp/
+
+# ── OS & editors ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~

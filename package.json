@@ -1,0 +1,96 @@
+{
+  "name": "dsh-openrouter-video",
+  "version": "1.0.0",
+  "description": "DSH plugin: a node-graph video workspace for the OpenRouter Video API — long-form shot planning, DAG execution, resume-safe job ledger, cost ceilings, and a sequence view.",
+  "license": "MIT",
+  "author": "fancyui",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "skills",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "MANUAL.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fancyui/dsh-openrouter-video.git"
+  },
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/skills.js && node --check lib/store.js && node --check lib/graph.js && node --check lib/exec.js && node --check lib/pricing.js && node --check lib/imagebed.js && node --check lib/sequence.js && node --check lib/cast.js",
+    "core": "node test-core.mjs",
+    "client": "node test-client.mjs",
+    "interact": "node test-interact.mjs",
+    "frames": "node test-frames.mjs",
+    "sequence": "node test-sequence.mjs",
+    "cast": "node test-cast.mjs",
+    "mutate": "node mutate-interact.mjs",
+    "mutate:host": "node mutate-host.mjs",
+    "mutate:frames": "node mutate-frames.mjs",
+    "mutate:sequence": "node mutate-sequence.mjs",
+    "smoke": "node smoke.mjs",
+    "url": "node test-api-url.mjs",
+    "preview": "node preview.mjs",
+    "load": "node preflight-load.mjs",
+    "all": "npm run check && npm run core && npm run client && npm run interact && npm run frames && npm run sequence && npm run cast && npm run smoke && npm run url && npm run preview && npm run load"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": "^0.2.0-rc.2"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "undici": "8.10.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1 <5.0.0",
+    "@deepseek-ai/dsh": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-skill": ">=0.2.0-rc.1 <0.3.0",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.1 <0.3.0",
+    "@deepseek-ai/schemastery": "^3.18.0",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh": { "optional": true },
+    "@deepseek-ai/dsh-skill": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true },
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-skill": "0.2.0-rc.1",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.1",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "react": "18.3.1",
+    "undici": "8.10.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "openrouter",
+    "video-generation",
+    "node-graph",
+    "long-form-video"
+  ]
+}

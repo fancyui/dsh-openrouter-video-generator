@@ -1,0 +1,42 @@
+# dsh-openrouter-video bundle patch
+#
+# This is the `dsh.bundle.patch` layer of the package. Installing through the
+# official CLI reconciles `dsh.profile.bundles` against installed packages and,
+# seeing this declaration, appends `dsh-openrouter-video` to the bundle stack;
+# the profile boot then merges THIS patch (a single `insert` of the plugin row),
+# exactly like a manual cordis.patch.yml mount line.
+#
+# Manual mount (equivalent, if you are not using the CLI): add
+#
+#   - insert:
+#       - id: openrouter-video
+#         name: 'dsh-openrouter-video'
+#
+# to the profile's own cordis.patch.yml. Do not do both — two mounts register
+# the same web route prefix twice and duplicate (kind, path) throws at boot.
+#
+# `config` supplies the `base` layer of the plugin's settings namespace. The
+# user layer resolves above it, so editing this file only changes the defaults
+# a user has not overridden.
+#
+# NOTE: this is a SEPARATE plugin row from `dsh-openrouter-imagen-v2` and uses
+# its own id, settings namespace (`openrouter-video`), route prefix
+# (`/openrouter-video/api`) and tool names. The two can be installed at the
+# same time.
+- insert:
+    - id: openrouter-video
+      name: 'dsh-openrouter-video'
+      config:
+        model: google/veo-3.1-fast
+        resolution: 720p
+        aspectRatio: 16:9
+        duration: 8
+        generateAudio: true
+        concurrency: 2
+        budgetUsd: 30
+        abortOnExceed: true
+        urlMode: https
+        pollIntervalMs: 30000
+        maxPollAttempts: 60
+        saveDir: generated-videos
+        skills: true
