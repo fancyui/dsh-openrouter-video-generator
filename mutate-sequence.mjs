@@ -107,8 +107,8 @@ const mutations = [
   {
     file: 'lib/index.js',
     name: 'the cast never reaches the request, so the prompt drifts again',
-    from: "    const prompt = applyCast(node.fields?.prompt, cast)",
-    to: '    const prompt = node.fields?.prompt',
+    from: "    const prompt = applyHandoff(applyCast(node.fields?.prompt, cast), handoff)",
+    to: '    const prompt = applyHandoff(node.fields?.prompt, handoff)',
   },
   {
     file: 'lib/index.js',

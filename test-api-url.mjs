@@ -940,6 +940,130 @@ await check('a shot that declares its own cast gets ONLY those characters', asyn
     'BOTH character sheets must reach the wire — this is what a single-input refs port silently ate')
 })
 
+await check('a shot that declares its own scenes gets ONLY those scenes — the fan-out is off by default now', async () => {
+  // Measured on the previous build: `plan` wired EVERY declared scene to EVERY
+  // shot, so a three-location film pinned three mutually exclusive rooftops into
+  // each prompt AND sent three plates as `input_references`. There was no way to
+  // say which place a shot was in, so a multi-location film had to become several
+  // graph documents.
+  //
+  // `shots[].scenes` mirrors `shots[].cast`: REPLACE, not union — and two
+  // separate rosters, because a character list must never decide the location.
+  // `[]` is a shot with no place at all (a transition), which is the ABSENCE case
+  // the old comment was right about; a different place is a name.
+  mode = 'e2e'
+  audioSupported = true
+  submitted.length = 0
+  completedPolls = 0
+  e2eSeq = 0
+  const boot_ = await boot({ apiKey: 'sk-or-v1-' + 'a'.repeat(48) })
+  const work = await mkdtemp(join(tmpdir(), 'orv-scene-roster-'))
+  tempDirs.push(work)
+
+  const planned = await boot_.plan.execute({
+    title: 'scenes', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [
+      { prompt: 'act one wide', duration: 4, scenes: ['天台'] },
+      { prompt: 'act one close', duration: 4, scenes: ['天台'] },
+      { prompt: 'act two', duration: 4, scenes: ['厨房'] },
+      { prompt: 'transition', duration: 4, scenes: [] },
+    ],
+    scenes: [
+      { name: '天台', description: '黄昏的城市屋顶，右侧一面满涂鸦的混凝土墙', image_url: 'https://img.example.com/roof.png' },
+      { name: '厨房', description: '清晨的狭小厨房，白色瓷砖，窗台有一株薄荷', image_url: 'https://img.example.com/kitchen.png' },
+      { name: '街道', description: '雨后的街道，积水倒影', image_url: 'https://img.example.com/street.png' },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+  await boot_.run.execute({ graph_id: planned.graphId, dry_run: false }, { agent: { session: { header: { cwd: work } } } })
+  assert.equal(submitted.length, 4, 'all four shots must be submitted')
+
+  const bodyOf = (needle) => {
+    const body = submitted.find((candidate) => candidate.prompt.includes(needle))
+    assert.ok(body, `a request for "${needle}" must exist`)
+    return body
+  }
+  const blocks = (body) => ['天台', '厨房', '街道'].filter((name) => body.prompt.includes(`${name}: `))
+  const plates = (body) => (body.input_references ?? []).map((row) => row.image_url.url)
+
+  assert.deepEqual(blocks(bodyOf('act one wide')), ['天台'], 'only its own place may be pinned')
+  assert.deepEqual(plates(bodyOf('act one wide')), ['https://img.example.com/roof.png'],
+    'and only its own plate — three plates on one shot is exactly what the defect looked like')
+
+  assert.deepEqual(blocks(bodyOf('act two')), ['厨房'])
+  assert.deepEqual(plates(bodyOf('act two')), ['https://img.example.com/kitchen.png'])
+
+  const transition = bodyOf('transition')
+  assert.deepEqual(blocks(transition), [], '`scenes: []` pins no place at all')
+  assert.deepEqual(plates(transition), [], 'and sends no plate')
+
+  // 街道 is declared but never wired. Unlike the old graph-wide fan-out it must
+  // still exist as a reusable definition — and be reported as doing nothing.
+  const stored = await boot_.graph.execute({ action: 'get', graph_id: planned.graphId })
+  const nodes = stored.graph?.nodes ?? stored.nodes ?? []
+  assert.ok(nodes.some((node) => node.type === 'scene' && node.fields?.name === '街道'),
+    'a declared-but-unused scene is still built as a definition')
+  const codes = (planned.warnings ?? []).map((row) => row.code)
+  assert.ok(codes.includes('scene-unused'),
+    `an unwired scene must be flagged, got ${JSON.stringify(codes)}`)
+})
+
+await check('`shots[].scenes` is DECLARED on the tool schema — an undeclared key is silently dropped', async () => {
+  // The original defect was not a wrong value, it was an ABSENT schema key:
+  // `shots.items` sets `additionalProperties: true`, so `shots[].scenes` was
+  // swallowed without an error — an agent could believe it had picked a place per
+  // shot and get every place on every shot. A behaviour test alone does not guard
+  // the declaration, which is the only thing the agent reads.
+  const { plan } = await boot()
+  const item = plan.parameters.properties.shots.items
+  assert.ok(item.properties.scenes, 'shots[].scenes must be declared')
+  assert.equal(item.properties.scenes.type, 'array')
+  assert.equal(item.properties.scenes.items.type, 'string')
+  assert.match(item.properties.scenes.description, /替换/u,
+    'the REPLACE semantics must be stated where the agent reads it')
+})
+
+await check('a scene name that does not exist is REPORTED at plan time, not discovered in the film', async () => {
+  // A typo in `shots[].scenes` leaves that shot with no place at all — the same
+  // silent-unwire class as a typo in `cast`. It has to be named while it is free.
+  const { plan } = await boot()
+  const planned = await plan.execute({
+    title: 'typo', model: 'google/veo-3.1-fast', duration: 4,
+    shots: [{ prompt: 'a', duration: 4, scenes: ['天台Z'] }],
+    scenes: [{ name: '天台', description: 'x', image_url: 'https://img.example.com/roof.png' }],
+  })
+  assert.equal(planned.ok, true, planned.error)
+  assert.ok(planned.notes.some((note) => /没有的场景[\s\S]*天台Z/u.test(note)),
+    `the unknown scene must be named, got ${JSON.stringify(planned.notes)}`)
+})
+
+await check('a per-shot cast roster does NOT decide the location', async () => {
+  // The two rosters are separate on purpose. The old code argued scenes must not
+  // be filterable at all because a character list must not strip the rooftop —
+  // true, and it is why `cast` still does not touch `scenes`.
+  const boot_ = await boot()
+  const planned = await boot_.plan.execute({
+    title: 'two-rosters', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [
+      { prompt: 'cat on the roof', duration: 4, cast: ['TOM'] },
+      { prompt: 'cat in the kitchen', duration: 4, cast: ['TOM'], scenes: ['厨房'] },
+    ],
+    cast: [{ name: 'TOM', description: '蓝灰色家猫', image_url: 'https://img.example.com/tom.png' }],
+    scenes: [
+      { name: '天台', description: '黄昏的屋顶', image_url: 'https://img.example.com/roof.png' },
+      { name: '厨房', description: '清晨的厨房', image_url: 'https://img.example.com/kitchen.png' },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+  const stored = await boot_.graph.execute({ action: 'get', graph_id: planned.graphId })
+  const edges = stored.graph?.edges ?? stored.edges ?? []
+  const refs = (shotId) => edges.filter((edge) => edge.to === shotId && edge.toPort === 'refs')
+    .map((edge) => edge.from).sort()
+  assert.deepEqual(refs('n_s01'), ['n_cast1', 'n_scene1', 'n_scene2'],
+    'a shot that declares only a cast keeps EVERY scene — the cast roster must not filter places')
+  assert.deepEqual(refs('n_s02'), ['n_cast1', 'n_scene2'],
+    'and a shot that declares its own scene gets that one, plus its cast')
+})
 await check('chain:"none" makes a HARD CUT — no first frame, and the character reference survives', async () => {
   // A film that chains every transition has no transitions at all. And it is
   // exactly on a hard cut that a character reference does its job: the API
@@ -1045,6 +1169,201 @@ await check('the 成片序列 node is WIRED — and an un-composable film says s
   )
   assert.equal(result.sequenceErrors.length, typeof row.error === 'string' ? 1 : 0,
     'a failed export must also be counted as an error, not silently succeed')
+})
+
+await check('`shots[].endsOn` is DECLARED on the tool schema — an undeclared key is silently dropped', async () => {
+  // The same lesson `shots[].scenes` had to learn: `plan` takes `additionalProperties: true`,
+  // so a key the schema does not declare is accepted, ignored, and reported nowhere.
+  const boot_ = await boot()
+  const item = boot_.plan.parameters.properties.shots.items
+  assert.ok(item.properties.endsOn, `shots[].properties = ${JSON.stringify(Object.keys(item.properties))}`)
+  assert.equal(item.properties.endsOn.type, 'string')
+  assert.match(item.properties.endsOn.description, /事实/u,
+    'the description must say FACTS, not pose — pose is the take chain\'s job')
+  assert.match(item.properties.endsOn.description, /不要写姿势/u,
+    'and it must say out loud not to write pose / facing / camera angle')
+})
+
+await check('the handoff reaches the REQUEST: facts from the PREVIOUS shot, marked as already happened', async () => {
+  mode = 'e2e'
+  audioSupported = true
+  submitted.length = 0
+  completedPolls = 0
+  e2eSeq = 0
+  const boot_ = await boot({ apiKey: 'sk-or-v1-' + 'a'.repeat(48) })
+  const work = await mkdtemp(join(tmpdir(), 'orv-handoff-'))
+  tempDirs.push(work)
+
+  const planned = await boot_.plan.execute({
+    title: 'handoff', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [
+      { prompt: 'a cat spins on the roof', duration: 4, endsOn: '花瓶已经被踢倒，碎片散在左前方' },
+      { prompt: 'a close-up of the cat landing', duration: 4, endsOn: '猫停在窗台边，窗外开始下雨' },
+      { prompt: 'the rain hits the roof', duration: 4 },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+
+  const runResult = await boot_.run.execute({ graph_id: planned.graphId, dry_run: false },
+    { agent: { session: { header: { cwd: work } } } })
+  const diagnostics = JSON.stringify({
+    submitted: submitted.map((body) => body.prompt),
+    completed: runResult.completed, failed: runResult.failed, error: runResult.error,
+  })
+  assert.equal(submitted.length, 3, `all three shots must be submitted: ${diagnostics}`)
+
+  const one = submitted.find((body) => body.prompt.includes('spins on the roof'))
+  const two = submitted.find((body) => body.prompt.includes('close-up of the cat landing'))
+  const three = submitted.find((body) => body.prompt.includes('rain hits the roof'))
+  assert.ok(one && two && three, diagnostics)
+
+  assert.equal(one.prompt.includes('上一段已生成'), false,
+    'the FIRST shot continues from nothing — no handoff may be invented for it')
+  assert.match(two.prompt, /上一段已生成/u, 'shot two must carry the handoff block')
+  assert.match(two.prompt, /花瓶已经被踢倒/u, 'carrying SHOT ONE\'s end state')
+  assert.match(two.prompt, /不要重演/u, 'and the note that it is context, not an instruction to render')
+  assert.match(three.prompt, /猫停在窗台边/u, 'shot three carries SHOT TWO\'s end state')
+  assert.equal(three.prompt.includes('花瓶已经被踢倒'), false,
+    'and NOT shot one\'s — an off-by-one here silently hands every shot the wrong neighbour')
+  for (const body of [two, three]) {
+    assert.equal(body.prompt.split('上一段已生成').length - 1, 1, 'the block must not be doubled')
+  }
+  assert.ok(two.prompt.endsWith('a close-up of the cat landing'), 'the authored prompt survives intact')
+
+  assert.ok(planned.notes.some((note) => /故事交接/u.test(note)),
+    `the plan receipt must count the covered seams, got ${JSON.stringify(planned.notes)}`)
+})
+
+await check('hard cuts are TOLD they may change angle; chained shots are not', async () => {
+  // The correction that shapes this whole feature: the handoff carries facts, not
+  // pose. A note that read 「本镜从这里继续」 on every seam would make every seam a
+  // chain while claiming not to — and would argue against the very cut the author
+  // asked for. So the closing sentence is derived from the wiring.
+  mode = 'e2e'
+  audioSupported = true
+  submitted.length = 0
+  completedPolls = 0
+  e2eSeq = 0
+  const boot_ = await boot({ apiKey: 'sk-or-v1-' + 'a'.repeat(48) })
+  const work = await mkdtemp(join(tmpdir(), 'orv-handoff-cut-'))
+  tempDirs.push(work)
+
+  const planned = await boot_.plan.execute({
+    title: 'handoff-mixed', model: 'google/veo-3.1-fast', duration: 4, chain: 'frames',
+    shots: [
+      { prompt: 'shot one', duration: 4, endsOn: '他已经进了屋' },
+      { prompt: 'shot two', duration: 4, chain: 'none', endsOn: '门被关上了' },
+      { prompt: 'shot three', duration: 4 },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+  await boot_.run.execute({ graph_id: planned.graphId, dry_run: false },
+    { agent: { session: { header: { cwd: work } } } })
+
+  const hard = submitted.find((body) => body.prompt.includes('shot two'))
+  const chained = submitted.find((body) => body.prompt.includes('shot three'))
+  assert.ok(hard && chained, JSON.stringify(submitted.map((body) => body.prompt)))
+  assert.match(hard.prompt, /硬切/u, 'a hard cut must be told it may change angle')
+  assert.match(hard.prompt, /不必接上上一段的画面/u)
+  assert.match(chained.prompt, /首帧来自上一段的末帧/u, 'a chained shot is told the picture is supplied')
+  assert.equal(chained.prompt.includes('不必接上上一段的画面'), false,
+    'and must NOT be told it may ignore the frame it was just handed')
+  for (const body of [hard, chained]) {
+    assert.equal(body.prompt.includes('从这里继续'), false,
+      'the block must never claim the shot continues from the previous picture — that is what chain is for')
+  }
+})
+
+await check('an empty `endsOn` hands NOTHING over — a deliberate act break is expressible', async () => {
+  mode = 'e2e'
+  audioSupported = true
+  submitted.length = 0
+  completedPolls = 0
+  e2eSeq = 0
+  const boot_ = await boot({ apiKey: 'sk-or-v1-' + 'a'.repeat(48) })
+  const work = await mkdtemp(join(tmpdir(), 'orv-handoff-empty-'))
+  tempDirs.push(work)
+
+  const planned = await boot_.plan.execute({
+    title: 'handoff-empty', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [
+      { prompt: 'act one ends', duration: 4 },
+      { prompt: 'act two begins', duration: 4, endsOn: '他们已经在路上了' },
+      { prompt: 'they arrive', duration: 4 },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+  await boot_.run.execute({ graph_id: planned.graphId, dry_run: false },
+    { agent: { session: { header: { cwd: work } } } })
+
+  const second = submitted.find((body) => body.prompt.includes('act two begins'))
+  assert.ok(second)
+  assert.equal(second.prompt, 'act two begins',
+    'shot one declared nothing, so shot two gets no block at all — not an empty header')
+  const third = submitted.find((body) => body.prompt.includes('they arrive'))
+  assert.match(third.prompt, /他们已经在路上了/u)
+})
+
+await check('a handoff already written into the prompt is not doubled (the marker is the idempotence key)', async () => {
+  // The guard `applyCast` needed a mutation for: a whole-prompt guard silently
+  // disables later blocks, so this one is per block too. It also means an author
+  // who wrote the handoff by hand keeps their wording.
+  mode = 'e2e'
+  audioSupported = true
+  submitted.length = 0
+  completedPolls = 0
+  e2eSeq = 0
+  const boot_ = await boot({ apiKey: 'sk-or-v1-' + 'a'.repeat(48) })
+  const work = await mkdtemp(join(tmpdir(), 'orv-handoff-idem-'))
+  tempDirs.push(work)
+
+  const planned = await boot_.plan.execute({
+    title: 'handoff-idem', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [
+      { prompt: 'shot one', duration: 4, endsOn: '门已经开了' },
+      { prompt: 'shot two', duration: 4 },
+    ],
+  })
+  assert.equal(planned.ok, true, planned.error)
+
+  const stored = await boot_.graph.execute({ action: 'get', graph_id: planned.graphId })
+  const whole = stored.graph ?? stored
+  const shot2 = whole.nodes.find((node) => node.id === 'n_s02')
+  shot2.fields.prompt = '【上一段已生成·以下是已经发生的事实】\n上一段结束时的情况：门已经开了\n（作者自己写的）\n\nshot two'
+  const saved = await boot_.graph.execute({ action: 'set', graph_id: planned.graphId, graph: whole })
+  assert.equal(saved.ok, true, saved.error)
+
+  await boot_.run.execute({ graph_id: planned.graphId, dry_run: false },
+    { agent: { session: { header: { cwd: work } } } })
+  const body = submitted.find((candidate) => candidate.prompt.includes('shot two'))
+  assert.ok(body)
+  assert.equal(body.prompt.split('上一段已生成').length - 1, 1, `the block was doubled: ${body.prompt}`)
+  assert.match(body.prompt, /作者自己写的/u, 'and the author\'s own wording is left exactly as written')
+})
+
+await check('a film where NO shot declares an end state says so — and a covered one stays quiet', async () => {
+  const silent = await boot()
+  const bare = await silent.plan.execute({
+    title: 'no-handoff', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [{ prompt: 'one', duration: 4 }, { prompt: 'two', duration: 4 }],
+  })
+  assert.equal(bare.ok, true, bare.error)
+  assert.ok(bare.notes.some((note) => /故事交接/u.test(note) && /n_s01→n_s02/u.test(note)),
+    `the plan receipt must name the bare seams, got ${JSON.stringify(bare.notes)}`)
+
+  const pre = await silent.run.execute({ graph_id: bare.graphId, dry_run: true })
+  const warningText = (rows) => (rows ?? []).map((row) => (typeof row === 'string' ? row : (row.message ?? ''))).join('\n')
+  assert.match(warningText(pre.warnings), /没有任何故事交接/u,
+    `validate must say the story crosses no seam: ${JSON.stringify(pre.warnings)}`)
+
+  const covered = await silent.plan.execute({
+    title: 'one-handoff', model: 'google/veo-3.1-fast', duration: 4, chain: 'none',
+    shots: [{ prompt: 'one', duration: 4, endsOn: '有一个人离开了' }, { prompt: 'two', duration: 4 }],
+  })
+  assert.equal(covered.ok, true, covered.error)
+  const coveredPre = await silent.run.execute({ graph_id: covered.graphId, dry_run: true })
+  assert.doesNotMatch(warningText(coveredPre.warnings), /没有任何故事交接/u,
+    'a film that declares a handoff must not be nagged: an empty seam is a legitimate edit')
 })
 
 await new Promise((resolve) => server.close(resolve))

@@ -10,7 +10,6 @@ import { readFileSync, writeFileSync, copyFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 const SRC = 'lib/index.js'
-const BAK = 'lib/index.js.mutbak'
 const NODE = process.env.NODE_BIN ?? process.execPath
 
 const mutations = [
@@ -99,17 +98,46 @@ const mutations = [
   {
     name: 'a per-shot cast roster also strips the scenes off that shot',
     from: `          const forThisShot = [
-            ...scenes,
-            ...(declared === null ? characters : characters.filter((row) => declared.includes(row.name))),
+            ...(declaredScenes === null ? scenes : scenes.filter((row) => declaredScenes.includes(row.name))),
+            ...(declaredCast === null ? characters : characters.filter((row) => declaredCast.includes(row.name))),
           ]`,
-    to: `          const forThisShot = declared === null
+    to: `          const forThisShot = declaredCast === null
             ? castCreated
-            : castCreated.filter((row) => declared.includes(row.name))`,
+            : castCreated.filter((row) => declaredCast.includes(row.name))`,
   },
   {
     name: 'the scenes parameter is ignored, so a declared place is never built',
     from: `          { kind: 'scene', rows: Array.isArray(args?.scenes) ? args.scenes : [], names: [], descriptions: [], sources: [] },`,
     to: `          { kind: 'scene', rows: [], names: [], descriptions: [], sources: [] },`,
+  },
+  {
+    name: 'a per-shot scene roster is ignored, so every place is pinned into every shot again',
+    from: `            ...(declaredScenes === null ? scenes : scenes.filter((row) => declaredScenes.includes(row.name))),`,
+    to: `            ...scenes,`,
+  },
+  {
+    name: 'the per-shot scene roster is UNIONED instead of replaced, so "this shot is elsewhere" stops being expressible',
+    from: `            ...(declaredScenes === null ? scenes : scenes.filter((row) => declaredScenes.includes(row.name))),`,
+    to: `            ...(declaredScenes === null ? scenes : scenes),`,
+  },
+  {
+    name: '`scenes` falls off the shot-entry schema, so a per-shot place is silently dropped instead of rejected',
+    from: `            scenes: {
+              type: 'array',
+              items: { type: 'string' },`,
+    to: `            scenesDropped: {
+              type: 'array',
+              items: { type: 'string' },`,
+  },
+  {
+    name: 'the replace semantics vanish from the schema the agent reads',
+    from: `给了这一条就**替换**默认的「本片全部场景」，不是并集。`,
+    to: `给了这一条就**并集**默认的「本片全部场景」，不是并集。`,
+  },
+  {
+    name: 'a misspelled scene name is never reported, so the shot quietly loses its place',
+    from: `          if (unknownSceneNames.size > 0) {`,
+    to: `          if (false) {`,
   },
 
   /* ---- measured live: a 26.3s "30s" film, and a filename full of · and + ---- */
@@ -135,6 +163,78 @@ const mutations = [
     from: '          fresh: body?.retry_failed === true,',
     to: '          fresh: false,',
   },
+
+  /* ---- 故事轴：落点交接. The axis that made a 6-shot film restart its story. ---- */
+  {
+    name: 'the handoff is never computed, so the story crosses no seam again',
+    from: `    const handoff = HANDOFF_TYPES.includes(node.type)
+      ? handoffFor(handoffOrder(shots(graph)), node.id, framed)
+      : null`,
+    to: `    const handoff = null`,
+  },
+  {
+    name: '`endsOn` is declared on the schema but ignored, so the author writes it and nothing happens',
+    from: `          if (typeof entry?.endsOn === 'string' && entry.endsOn.trim().length > 0) fields.endsOn = entry.endsOn.trim()`,
+    to: `          void entry`,
+  },
+  {
+    name: '`endsOn` falls off the shot-entry schema, so it is silently dropped instead of rejected',
+    from: `            endsOn: {
+              type: 'string',`,
+    to: `            endsOnDropped: {
+              type: 'string',`,
+  },
+  {
+    name: 'the "facts, not pose" instruction vanishes from the schema the agent reads',
+    from: `                + '所以写**跨过剪辑仍然成立的事实**，**不要写姿势、朝向、机位**。\\n\\n'`,
+    to: `                + '所以写这一镜结尾的姿势、朝向、机位。\\n\\n'`,
+  },
+  {
+    name: 'the framing flag is dropped, so a hard cut is told its picture connects to the previous shot',
+    from: `    const framed = graph.edges.some((edge) => edge.to === node.id && edge.toPort === 'frames')`,
+    to: `    const framed = true`,
+  },
+  {
+    name: 'the plan receipt never reports the bare seams',
+    from: `        if (seams.bare.length > 0) {`,
+    to: `        if (false) {`,
+  },
+  {
+    name: 'the handoff reads the WRONG neighbour — the shot hands over to itself',
+    from: `  const text = endsOnOf(list[index - 1])`,
+    to: `  const text = endsOnOf(list[index])`,
+    file: 'lib/handoff.js',
+  },
+  {
+    name: 'the marker stops being the idempotence key, so a re-run stacks a second copy on every retry',
+    from: `  if (text.includes(HANDOFF_MARKER)) return text`,
+    to: `  void 0`,
+    file: 'lib/handoff.js',
+  },
+  {
+    name: 'the "do not re-perform" note is dropped, so the block reads as an instruction to render',
+    from: `const NOT_AGAIN = '以上已经发生，不要重演'`,
+    to: `const NOT_AGAIN = ''`,
+    file: 'lib/handoff.js',
+  },
+  {
+    name: 'an empty `endsOn` sends a block anyway, so a deliberate act break stops being expressible',
+    from: `  if (text.length === 0) return null`,
+    to: `  void text`,
+    file: 'lib/handoff.js',
+  },
+  {
+    name: 'the framed/cut note is chosen the wrong way round, so every hard cut claims the picture connects',
+    from: `  const note = handoff.framed === true ? HANDOFF_NOTE_FRAMED : HANDOFF_NOTE_CUT`,
+    to: `  const note = handoff.framed === true ? HANDOFF_NOTE_CUT : HANDOFF_NOTE_FRAMED`,
+    file: 'lib/handoff.js',
+  },
+  {
+    name: 'validate never says the story crosses no seam',
+    from: `  if (handoff.declared === 0 && handoff.seams > 0) {`,
+    to: `  if (false) {`,
+    file: 'lib/graph.js',
+  },
 ]
 
 /**
@@ -148,8 +248,20 @@ const mutations = [
  */
 const SUITES = (process.env.SUITE ?? 'smoke.mjs,test-api-url.mjs').split(',').map((s) => s.trim())
 
-copyFileSync(SRC, BAK)
-const original = readFileSync(SRC, 'utf8')
+/*
+ * A mutation names the file it breaks. It used to always be `lib/index.js`, which
+ * made the whole of lib/handoff.js and the new `validate` rule unmutable — and a
+ * rule no mutation can reach is a rule no test proves.
+ */
+const files = [...new Set(mutations.map((m) => m.file ?? SRC))]
+const backups = new Map()
+const originals = new Map()
+for (const file of files) {
+  backups.set(file, `${file}.mutbak`)
+  copyFileSync(file, backups.get(file))
+  originals.set(file, readFileSync(file, 'utf8'))
+}
+
 let caught = 0
 
 try {
@@ -166,11 +278,13 @@ try {
   console.log(`baseline green (${SUITES.join(' + ')})\n`)
 
   for (const m of mutations) {
+    const file = m.file ?? SRC
+    const original = originals.get(file)
     if (!original.includes(m.from)) {
-      console.log(`SKIP    ${m.name} — anchor not found`)
+      console.log(`SKIP    ${m.name} — anchor not found in ${file}`)
       continue
     }
-    writeFileSync(SRC, original.replace(m.from, m.to))
+    writeFileSync(file, original.replace(m.from, m.to))
     let red = false
     let failLine = null
     for (const suite of SUITES) {
@@ -187,12 +301,18 @@ try {
       console.log('        every suite stayed GREEN — the assertion is vacuous')
     }
     if (red) caught += 1
-    writeFileSync(SRC, original)
+    writeFileSync(file, original)
   }
 } finally {
-  copyFileSync(BAK, SRC)
-  console.log(`\nrestored byte-identical: ${readFileSync(SRC, 'utf8') === original}`)
-  if (process.platform === 'win32') spawnSync('cmd', ['/c', 'del', BAK.replace(/\//g, '\\')])
+  let identical = true
+  for (const file of files) {
+    copyFileSync(backups.get(file), file)
+    const same = readFileSync(file, 'utf8') === originals.get(file)
+    identical = identical && same
+    console.log(`restored byte-identical: ${file} = ${same}`)
+    if (process.platform === 'win32') spawnSync('cmd', ['/c', 'del', backups.get(file).replace(/\//g, '\\')])
+  }
+  if (!identical) process.exitCode = 1
 }
 
 console.log(`\n${caught} of ${mutations.length} mutations caught`)

@@ -23,6 +23,7 @@ generation — it is these:
 | No idea what it will cost | **Preflight by default**: `run` reports a cost ceiling unless you pass `dry_run:false`; over-budget runs are refused before anything is sent |
 | The cat looks different in every shot | **Bibles**: a character/scene is a fixed description (injected verbatim into every shot it appears in) plus an optional reference image, **wired per shot** |
 | Shots do not connect | **Frame chaining**: last frame of shot N → first frame of shot N+1 (local ffmpeg + image-bed upload, no API cost) |
+| Character and place are stable, the STORY still does not connect | **`endsOn`**: the FACTS shot N leaves behind (not its pose) are injected into shot N+1's prompt as an already-generated previous segment, marked do-not-re-perform — chaining only carries the picture, and on a hard cut the text is the only thing that crosses |
 | A pile of loose mp4s to assemble by hand | **Sequence node**: concatenates by `shotIndex` with ffmpeg and writes a `-manifest.json` alongside |
 
 ---
@@ -46,11 +47,12 @@ Creativity does not live here; this only guarantees the machine can honour it.
 
 ```
 script ──► shot 1 ──► shot 2 ──► shot 3         each shot takes:
- prompt ──┘    │         ▲        ▲              · brief  (prompt)
+               │         ▲        ▲              · endsOn (facts the previous shot left behind)
                │         │        │              · refs   (character / scene / reference)
              take ───────┘        │              · frames (previous shot's last frame)
              take ────────────────┘
-                                     └──► seq ──► film.mp4 + film-manifest.json
+                (the prompt is typed in each shot's own inspector)
+                                      └──► seq ──► film.mp4 + film-manifest.json
 cast/scene ──► refs
 ```
 
@@ -153,11 +155,16 @@ Open the sidebar entry **"视频生成"**, then **"设置" (Settings)** in the t
 
 ```
 1. Sidebar → "视频生成" → click the title ▾ → "+ 新建项目" (new project)
-2. Left column "节点库": click to add  prompt → generate ×3 → seq
-3. Click a node and fill the inspector: prompt, duration, model; number the three generates 1/2/3
-4. Wire them: prompt ──brief──► generate; each generate's job ──jobs──► seq
+2. Left column "节点库": click to add  generate ×3 → seq
+3. Click a node and fill the inspector: prompt, duration, model; number the three generates 1/2/3,
+   and give shots 1 and 2 an "结尾状况（写给下一镜）" — that is the only channel the story crosses on
+4. Wire them: each generate's job ──jobs──► seq
 5. Press "预检" (preflight, free) to read the ceiling → "执行全图" to actually run → the film appears below
 ```
+
+> **Note: the `brief` input port has no consumer** (measured: text wired into it never reaches the
+> request). Type each shot's prompt in that shot's own inspector; the script node stays on the canvas
+> as a storyboard document for humans to read.
 
 Every button, every field and every error message: **[MANUAL.md](MANUAL.md)** (Chinese only — the
 plugin UI itself is Chinese).

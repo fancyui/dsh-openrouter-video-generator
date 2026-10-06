@@ -26,7 +26,7 @@
     "url": "git+https://github.com/fancyui/dsh-openrouter-video.git"
   },
   "scripts": {
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/skills.js && node --check lib/store.js && node --check lib/graph.js && node --check lib/exec.js && node --check lib/pricing.js && node --check lib/imagebed.js && node --check lib/sequence.js && node --check lib/cast.js",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/skills.js && node --check lib/store.js && node --check lib/graph.js && node --check lib/exec.js && node --check lib/pricing.js && node --check lib/imagebed.js && node --check lib/sequence.js && node --check lib/cast.js && node --check lib/handoff.js",
     "core": "node test-core.mjs",
     "client": "node test-client.mjs",
     "interact": "node test-interact.mjs",
